@@ -24,10 +24,16 @@ import { useToastStore } from '../stores/uiStore';
 import {
   MINERAL_KEYS,
   MINERAL_LABELS,
+  OBSERVATION_METHODS,
+  OBSERVATION_METHOD_LABELS,
   PREPARATION_LABELS,
+  SECTION_DATA_STATUS_LABELS,
   SECTION_QUALITIES,
   SECTION_QUALITY_LABELS,
   mineralTotal,
+  primaryMicrograph,
+  sectionDataStatus,
+  type ObservationMethod,
   type SectionQuality,
 } from '../types/section';
 import { formatDate } from '../utils/format';
@@ -36,7 +42,7 @@ import { formatDate } from '../utils/format';
 export default function Sections() {
   const sections = useSampleStore((s) => s.sections);
   const samples = useSampleStore((s) => s.samples);
-  const updateSection = useSampleStore((s) => s.updateSection);
+  const labelSectionQuality = useSampleStore((s) => s.labelSectionQuality);
   const notify = useToastStore((s) => s.notify);
   const { results } = useSampleFilter();
 
@@ -44,6 +50,7 @@ export default function Sections() {
   const [thicknessMax, setThicknessMax] = useState<number | null>(null);
   const [mineralKey, setMineralKey] = useState<(typeof MINERAL_KEYS)[number] | ''>('');
   const [mineralMin, setMineralMin] = useState<number | null>(null);
+  const [methodFilter, setMethodFilter] = useState<ObservationMethod | ''>('');
   const [selected, setSelected] = useState<string[]>([]);
 
   const sampleMap = useMemo(() => new Map(samples.map((s) => [s.id, s])), [samples]);
@@ -56,9 +63,10 @@ export default function Sections() {
         if (thicknessMin !== null && s.thickness < thicknessMin) return false;
         if (thicknessMax !== null && s.thickness > thicknessMax) return false;
         if (mineralKey && mineralMin !== null && s.minerals[mineralKey] < mineralMin) return false;
+        if (methodFilter && !s.micrographs.some((m) => m.method === methodFilter)) return false;
         return true;
       }),
-    [sections, visibleSampleIds, thicknessMin, thicknessMax, mineralKey, mineralMin],
+    [sections, visibleSampleIds, thicknessMin, thicknessMax, mineralKey, mineralMin, methodFilter],
   );
 
   const toggle = (id: string) => {
@@ -67,8 +75,26 @@ export default function Sections() {
 
   const bulkLabel = async (quality: SectionQuality) => {
     if (!selected.length) return;
-    await Promise.all(selected.map((id) => updateSection(id, { quality })));
-    notify(`已批量标注 ${selected.length} 张切片为「${SECTION_QUALITY_LABELS[quality]}」`);
+    const failures: string[] = [];
+    let labeled = 0;
+    for (const id of selected) {
+      const reason = await labelSectionQuality(id, quality);
+      if (reason) {
+        const sec = sections.find((s) => s.id === id);
+        failures.push(`${sec?.sectionNo ?? id}：${reason}`);
+      } else {
+        labeled += 1;
+      }
+    }
+    if (failures.length) {
+      notify(
+        `已标注 ${labeled} 张为「${SECTION_QUALITY_LABELS[quality]}」；` +
+          `${failures.length} 张不合格保持原状态——${failures.join('；')}`,
+        'warning',
+      );
+    } else {
+      notify(`已批量标注 ${labeled} 张切片为「${SECTION_QUALITY_LABELS[quality]}」`);
+    }
     setSelected([]);
   };
 
@@ -77,7 +103,7 @@ export default function Sections() {
       <Box>
         <Typography variant="h4">切片库</Typography>
         <Typography variant="body2" color="text.secondary">
-          按厚度与矿物占比检索切片，点击卡片回跳所属样本，支持勾选后批量标注质量。
+          按厚度、矿物占比与观察方式检索切片，卡片标出主图与资料状态；勾选后可批量标注质量，标「优」前需主图存在且说明不为空。
         </Typography>
       </Box>
 
@@ -126,6 +152,22 @@ export default function Sections() {
             onChange={(e) => setMineralMin(e.target.value === '' ? null : Number(e.target.value))}
             sx={{ width: 130 }}
           />
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel id="method-filter-label">观察方式</InputLabel>
+            <Select
+              labelId="method-filter-label"
+              label="观察方式"
+              value={methodFilter}
+              onChange={(e) => setMethodFilter(e.target.value as typeof methodFilter)}
+            >
+              <MenuItem value="">不限</MenuItem>
+              {OBSERVATION_METHODS.map((m) => (
+                <MenuItem key={m} value={m}>
+                  {OBSERVATION_METHOD_LABELS[m]}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
           <Chip size="small" variant="outlined" label={`命中 ${filtered.length} / ${sections.length}`} />
           <Box sx={{ flex: 1 }} />
           {selected.length ? (
@@ -144,7 +186,7 @@ export default function Sections() {
       {filtered.length === 0 ? (
         <EmptyState
           title="没有符合条件的切片"
-          description="可放宽厚度或矿物占比条件；切片需要在样本详情页就地新增。"
+          description="可放宽厚度、矿物占比或观察方式条件；切片需要在样本详情页就地新增。"
           actionLabel="去样本总览"
           actionTo="/"
         />
@@ -153,6 +195,8 @@ export default function Sections() {
           {filtered.map((s) => {
             const sample = sampleMap.get(s.sampleId);
             const sum = mineralTotal(s.minerals);
+            const primary = primaryMicrograph(s);
+            const status = sectionDataStatus(s);
             return (
               <Grid item xs={12} sm={6} md={4} key={s.id}>
                 <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
@@ -167,6 +211,12 @@ export default function Sections() {
                       <Typography variant="h6" fontWeight={700} sx={{ flex: 1 }}>
                         {s.sectionNo}
                       </Typography>
+                      <Chip
+                        size="small"
+                        variant="outlined"
+                        color={status === 'complete' ? 'success' : 'warning'}
+                        label={SECTION_DATA_STATUS_LABELS[status]}
+                      />
                       <Chip size="small" color="secondary" label={SECTION_QUALITY_LABELS[s.quality]} />
                     </Stack>
 
@@ -198,8 +248,24 @@ export default function Sections() {
                     <Typography variant="caption" color={sum === 100 ? 'success.main' : 'warning.main'}>
                       占比合计 {sum}%
                     </Typography>
+                    <Typography variant="body2" color={primary ? 'text.primary' : 'warning.main'}>
+                      主图：
+                      {primary
+                        ? `${primary.fileName}（${OBSERVATION_METHOD_LABELS[primary.method]}${primary.magnification !== null ? ` · ${primary.magnification}×` : ''}）`
+                        : s.micrographs.length
+                          ? '待指定'
+                          : '无照片'}
+                    </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      显微照片：{s.micrographs.length ? s.micrographs.join('、') : '未上传'}
+                      显微照片：
+                      {s.micrographs.length
+                        ? s.micrographs
+                            .map(
+                              (m) =>
+                                `${m.fileName}（${OBSERVATION_METHOD_LABELS[m.method]}${m.magnification !== null ? ` ${m.magnification}×` : ''}）`,
+                            )
+                            .join('、')
+                        : '未上传'}
                     </Typography>
                   </Stack>
                 </Paper>

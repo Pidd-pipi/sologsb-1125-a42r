@@ -3,7 +3,7 @@ import { db, makeId, seedIfEmpty } from '../db';
 import type { AnalysisRecord } from '../types/analysis';
 import type { FindRecord } from '../types/find';
 import type { MeteoriteSample } from '../types/sample';
-import type { ThinSection } from '../types/section';
+import { canMarkGood, type Micrograph, type SectionQuality, type ThinSection } from '../types/section';
 
 export interface SampleState {
   samples: MeteoriteSample[];
@@ -19,6 +19,12 @@ export interface SampleState {
   addFind: (input: Omit<FindRecord, 'id' | 'createdAt'>) => Promise<string>;
   addSection: (input: Omit<ThinSection, 'id' | 'createdAt'>) => Promise<string>;
   updateSection: (id: string, patch: Partial<ThinSection>) => Promise<void>;
+  addMicrograph: (sectionId: string, input: Omit<Micrograph, 'id'>) => Promise<void>;
+  updateMicrograph: (sectionId: string, micrographId: string, patch: Partial<Omit<Micrograph, 'id'>>) => Promise<void>;
+  removeMicrograph: (sectionId: string, micrographId: string) => Promise<void>;
+  setPrimaryMicrograph: (sectionId: string, micrographId: string | null) => Promise<void>;
+  /** 标注质量；标「优」前校验主图与说明，不合格时保持原状态并返回原因 */
+  labelSectionQuality: (sectionId: string, quality: SectionQuality) => Promise<string | null>;
   addAnalysis: (input: Omit<AnalysisRecord, 'id' | 'createdAt'>) => Promise<string>;
   nextSampleSeq: () => number;
 }
@@ -95,6 +101,51 @@ export const useSampleStore = create<SampleState>((set, get) => ({
   updateSection: async (id, patch) => {
     await db.sections.update(id, patch);
     set({ sections: get().sections.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
+  },
+
+  addMicrograph: async (sectionId, input) => {
+    const section = get().sections.find((s) => s.id === sectionId);
+    if (!section) return;
+    const micrograph: Micrograph = { ...input, id: makeId('mg') };
+    await get().updateSection(sectionId, { micrographs: [...section.micrographs, micrograph] });
+  },
+
+  updateMicrograph: async (sectionId, micrographId, patch) => {
+    const section = get().sections.find((s) => s.id === sectionId);
+    if (!section) return;
+    const micrographs = section.micrographs.map((m) => (m.id === micrographId ? { ...m, ...patch } : m));
+    await get().updateSection(sectionId, { micrographs });
+  },
+
+  removeMicrograph: async (sectionId, micrographId) => {
+    const section = get().sections.find((s) => s.id === sectionId);
+    if (!section) return;
+    const patch: Partial<ThinSection> = {
+      micrographs: section.micrographs.filter((m) => m.id !== micrographId),
+    };
+    // 移除的若是主图：明确标为待指定，绝不自动改指其他照片
+    if (section.primaryMicrographId === micrographId) {
+      patch.primaryMicrographId = null;
+    }
+    await get().updateSection(sectionId, patch);
+  },
+
+  setPrimaryMicrograph: async (sectionId, micrographId) => {
+    const section = get().sections.find((s) => s.id === sectionId);
+    if (!section) return;
+    if (micrographId !== null && !section.micrographs.some((m) => m.id === micrographId)) return;
+    await get().updateSection(sectionId, { primaryMicrographId: micrographId });
+  },
+
+  labelSectionQuality: async (sectionId, quality) => {
+    const section = get().sections.find((s) => s.id === sectionId);
+    if (!section) return '切片不存在';
+    if (quality === 'good') {
+      const reason = canMarkGood(section);
+      if (reason) return reason;
+    }
+    await get().updateSection(sectionId, { quality });
+    return null;
   },
 
   addAnalysis: async (input) => {

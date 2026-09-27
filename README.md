@@ -43,7 +43,7 @@ docker compose down
 | `/` | 样本总览：卡片流 + 分类/化学群/重量区间筛选与排序，缺坐标或缺切片显示角标 | MeteoriteSample |
 | `/samples/new` | 样本登记：编号生成、分类化学群、重量、存放位置，可补录发现地坐标并即时校验 | MeteoriteSample、FindRecord |
 | `/samples/:id` | 样本详情：基本信息 + 发现地摘要 + 切片列表 + 分析记录，可就地新增 | 四个模型 |
-| `/sections` | 切片库：按厚度与矿物占比筛选，回跳样本，批量标注质量 | ThinSection、MeteoriteSample |
+| `/sections` | 切片库：按厚度、矿物占比与观察方式筛选，卡片标出主图与资料状态，回跳样本，批量标注质量（标「优」逐张校验并说明原因） | ThinSection、MeteoriteSample |
 | `/analysis` | 分析检测：录入 Fa / Fs / Ni / 铁纹石带宽，实时分类建议与阈值命中说明 | AnalysisRecord、MeteoriteSample |
 | `/locations` | 发现地分布：SVG 网格按经纬度打点、按分类着色、点选弹出样本清单 | FindRecord、MeteoriteSample |
 
@@ -51,7 +51,7 @@ docker compose down
 
 - `types/sample.ts` — **MeteoriteSample**：id、样本编号、总重量 g、分类、化学群、风化等级 W0–W4、发现/坠落、存放位置
 - `types/find.ts` — **FindRecord**：id、关联样本、地名、国家地区、经纬度、坐标来源（GPS/文献）、发现环境、发现者
-- `types/section.ts` — **ThinSection**：id、切片编号、关联样本、厚度 μm、制样方式、矿物占比、显微照片清单
+- `types/section.ts` — **ThinSection**：id、切片编号、关联样本、厚度 μm、制样方式、矿物占比、显微照片清单（观察方式 / 倍数 / 说明）、主图指定（移除主图后标为待指定）
 - `types/analysis.ts` — **AnalysisRecord**：id、关联样本或切片、方法、橄榄石 Fa、辉石 Fs、Ni wt%、铁纹石带宽 mm、检测日期
 
 ## 目录结构
@@ -71,9 +71,10 @@ sologsb-1125/
     ├── public/favicon.svg
     └── src/
         ├── types/{sample,find,section,analysis}.ts
-        ├── db/index.ts                 # Dexie 封装与 v1→v3 升级迁移
+        ├── db/index.ts                 # Dexie 封装与 v1→v4 升级迁移
         ├── stores/{sampleStore,uiStore}.ts
         ├── components/common/{SampleCard,Badge,FieldGroup,EmptyState,CoordinatePicker,AppShell}.tsx
+        ├── components/sections/MicrographEditor.tsx
         ├── hooks/{useSampleFilter,useLocalDraft,useRegionStats}.ts
         ├── pages/{Overview,New,Detail,Sections,Analysis,Locations}.tsx
         ├── router/index.tsx
@@ -87,6 +88,7 @@ sologsb-1125/
   - v1 建 `samples` / `finds` / `sections`
   - v2 新增 `analysis` 表并加 `sampleId` 索引
   - v3 为 `samples` 补 `updatedAt` 字段并按 id 回填旧记录
+  - v4 将 `sections` 的显微照片由纯文件名升级为结构化对象（观察方式 / 倍数 / 说明），旧记录主图一律置空（待指定），打开时按缺资料处理
 - **草稿**：`/samples/new` 与 `/analysis` 的表单草稿写入 localStorage（键前缀 `gbmeteorite:draft:`），切页自动恢复，提交后清理
 - 首次打开会灌入 3 份演示样本、2 条发现记录、2 张切片与 2 条检测记录，便于直接体验筛选与打点
 

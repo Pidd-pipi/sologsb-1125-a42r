@@ -1,7 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { MeteoriteSample } from '../types/sample';
 import type { FindRecord } from '../types/find';
-import type { ThinSection } from '../types/section';
+import type { ObservationMethod, ThinSection } from '../types/section';
 import type { AnalysisRecord } from '../types/analysis';
 
 /** 库名固定为 gbmeteorite-db */
@@ -12,6 +12,8 @@ export const DB_NAME = 'gbmeteorite-db';
  *  - v1：建 samples / finds / sections 三张表
  *  - v2：新增 analysis 表，并为 analysis 加 sampleId 索引
  *  - v3：为 samples 补 updatedAt 字段，并按 id 回填旧记录
+ *  - v4：显微照片由纯文件名升级为结构化对象（观察方式/倍数/说明），
+ *        旧记录主图一律置空（待指定），打开时按缺资料处理
  */
 export class MeteoriteDB extends Dexie {
   samples!: Table<MeteoriteSample, string>;
@@ -65,6 +67,40 @@ export class MeteoriteDB extends Dexie {
             }
           });
       });
+
+    this.version(4)
+      .stores({
+        samples:
+          'id, sampleNo, category, chemicalGroup, totalWeight, createdAt, updatedAt',
+        finds: 'id, sampleId, region, createdAt',
+        sections: 'id, sectionNo, sampleId, thickness, createdAt',
+        analysis: 'id, sampleId, sectionId, method, testedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        // v4：显微照片从纯文件名升级为结构化对象；旧记录主图置空（待指定），按缺资料处理
+        await tx
+          .table('sections')
+          .toCollection()
+          .modify((rec: Record<string, unknown>) => {
+            const list = rec.micrographs;
+            if (Array.isArray(list) && list.some((m) => typeof m === 'string')) {
+              rec.micrographs = list.map((m) =>
+                typeof m === 'string'
+                  ? {
+                      id: makeId('mg'),
+                      fileName: m,
+                      method: guessObservationMethod(m),
+                      magnification: null,
+                      note: '',
+                    }
+                  : m,
+              );
+            }
+            if (typeof rec.primaryMicrographId !== 'string') {
+              rec.primaryMicrographId = null;
+            }
+          });
+      });
   }
 }
 
@@ -74,6 +110,15 @@ export const db = new MeteoriteDB();
 export function makeId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${Date.now().toString(36)}_${rand}`;
+}
+
+/** 按文件名关键字猜测旧照片的观察方式，猜不到默认单偏光 */
+function guessObservationMethod(fileName: string): ObservationMethod {
+  const name = fileName.toLowerCase();
+  if (name.includes('xpl')) return 'xpl';
+  if (name.includes('reflect')) return 'reflected';
+  if (name.includes('bse') || name.includes('sem')) return 'sem-bse';
+  return 'ppl';
 }
 
 /** 首次运行时灌入演示档案，保证页面有可检索内容 */
@@ -157,7 +202,23 @@ export async function seedIfEmpty(): Promise<void> {
         thickness: 30,
         preparation: 'resin',
         minerals: { olivine: 42, pyroxene: 28, feldspar: 12, metal: 18 },
-        micrographs: ['met001_ppl.jpg', 'met001_xpl.jpg'],
+        micrographs: [
+          {
+            id: 'mg_seed_1a',
+            fileName: 'met001_ppl.jpg',
+            method: 'ppl',
+            magnification: 50,
+            note: '单偏光下球粒轮廓清晰，熔壳边缘完整',
+          },
+          {
+            id: 'mg_seed_1b',
+            fileName: 'met001_xpl.jpg',
+            method: 'xpl',
+            magnification: 50,
+            note: '正交偏光，橄榄石干涉色正常',
+          },
+        ],
+        primaryMicrographId: 'mg_seed_1a',
         quality: 'good',
         createdAt: now - 86400000 * 35,
       },
@@ -168,7 +229,16 @@ export async function seedIfEmpty(): Promise<void> {
         thickness: 60,
         preparation: 'epoxy',
         minerals: { olivine: 2, pyroxene: 5, feldspar: 1, metal: 92 },
-        micrographs: ['met002_reflect.jpg'],
+        micrographs: [
+          {
+            id: 'mg_seed_2a',
+            fileName: 'met002_reflect.jpg',
+            method: 'reflected',
+            magnification: 100,
+            note: '反射光下铁纹石与镍纹石交生',
+          },
+        ],
+        primaryMicrographId: 'mg_seed_2a',
         quality: 'fair',
         createdAt: now - 86400000 * 25,
       },
