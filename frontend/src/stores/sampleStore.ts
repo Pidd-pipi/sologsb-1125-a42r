@@ -3,7 +3,7 @@ import { db, makeId, seedIfEmpty } from '../db';
 import type { AnalysisRecord } from '../types/analysis';
 import type { FindRecord } from '../types/find';
 import type { MeteoriteSample } from '../types/sample';
-import type { ThinSection } from '../types/section';
+import { goodQualityBlockReason, type ThinSection } from '../types/section';
 
 export interface SampleState {
   samples: MeteoriteSample[];
@@ -87,12 +87,25 @@ export const useSampleStore = create<SampleState>((set, get) => ({
 
   addSection: async (input) => {
     const record: ThinSection = { ...input, id: makeId('section'), createdAt: Date.now() };
+    // 标「优」前主图必须存在且说明不为空，否则拒绝并保持原状态
+    if (record.quality === 'good') {
+      const reason = goodQualityBlockReason(record);
+      if (reason) throw new Error(reason);
+    }
     await db.sections.add(record);
     set({ sections: [record, ...get().sections] });
     return record.id;
   },
 
   updateSection: async (id, patch) => {
+    // 仅在「标为优」这一动作上做前置校验；其余字段更新（含补录照片资料）不拦截
+    if (patch.quality === 'good') {
+      const current = get().sections.find((s) => s.id === id);
+      if (current) {
+        const reason = goodQualityBlockReason({ ...current, ...patch });
+        if (reason) throw new Error(reason);
+      }
+    }
     await db.sections.update(id, patch);
     set({ sections: get().sections.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
   },

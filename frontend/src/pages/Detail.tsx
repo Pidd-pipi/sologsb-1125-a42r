@@ -22,6 +22,7 @@ import SampleCard from '../components/common/SampleCard';
 import FieldGroup from '../components/common/FieldGroup';
 import ClassificationBadge from '../components/common/Badge';
 import EmptyState from '../components/common/EmptyState';
+import MicrographEditor from '../components/sections/MicrographEditor';
 import { useSampleStore } from '../stores/sampleStore';
 import { useToastStore } from '../stores/uiStore';
 import {
@@ -33,12 +34,15 @@ import {
 import {
   MINERAL_KEYS,
   MINERAL_LABELS,
+  OBSERVATION_METHODS,
+  OBSERVATION_METHOD_LABELS,
   PREPARATIONS,
   PREPARATION_LABELS,
   SECTION_QUALITIES,
   SECTION_QUALITY_LABELS,
   mineralTotal,
   type MineralRatios,
+  type ObservationMethod,
   type PreparationMethod,
   type SectionQuality,
 } from '../types/section';
@@ -75,6 +79,9 @@ export default function Detail() {
     preparation: 'resin' as PreparationMethod,
     quality: 'unrated' as SectionQuality,
     micrograph: '',
+    microMethod: 'ppl' as ObservationMethod,
+    microMag: 40,
+    microDesc: '',
     minerals: { olivine: 40, pyroxene: 25, feldspar: 15, metal: 20 } as MineralRatios,
   });
   const [analysisDraft, setAnalysisDraft] = useState({
@@ -105,17 +112,34 @@ export default function Detail() {
 
   const submitSection = async () => {
     const no = sectionDraft.sectionNo.trim() || `TS-${new Date().getFullYear()}-${mySections.length + 1}`.padEnd(3, '0');
-    await addSection({
-      sectionNo: no,
-      sampleId: sample.id,
-      thickness: Number(sectionDraft.thickness),
-      preparation: sectionDraft.preparation,
-      minerals: sectionDraft.minerals,
-      micrographs: sectionDraft.micrograph.trim() ? [sectionDraft.micrograph.trim()] : [],
-      quality: sectionDraft.quality,
-    });
+    const fileName = sectionDraft.micrograph.trim();
+    try {
+      await addSection({
+        sectionNo: no,
+        sampleId: sample.id,
+        thickness: Number(sectionDraft.thickness),
+        preparation: sectionDraft.preparation,
+        minerals: sectionDraft.minerals,
+        micrographs: fileName
+          ? [
+              {
+                fileName,
+                method: sectionDraft.microMethod,
+                magnification: Number(sectionDraft.microMag) || null,
+                description: sectionDraft.microDesc.trim(),
+              },
+            ]
+          : [],
+        // 登记时如已附带首张照片，则直接以它为主图；否则保持「待指定」
+        primaryImage: fileName || null,
+        quality: sectionDraft.quality,
+      });
+    } catch (err) {
+      notify(`未新增切片：${err instanceof Error ? err.message : '未知原因'}`, 'warning');
+      return;
+    }
     notify(`已为 ${sample.sampleNo} 新增切片 ${no}`);
-    setSectionDraft((d) => ({ ...d, sectionNo: '', micrograph: '' }));
+    setSectionDraft((d) => ({ ...d, sectionNo: '', micrograph: '', microDesc: '' }));
   };
 
   const submitAnalysis = async () => {
@@ -303,9 +327,7 @@ export default function Detail() {
                       矿物占比：{MINERAL_KEYS.map((k) => `${MINERAL_LABELS[k]} ${s.minerals[k]}%`).join(' · ')}
                       （合计 {mineralTotal(s.minerals)}%）
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      显微照片：{s.micrographs.length ? s.micrographs.join('、') : '未上传'}
-                    </Typography>
+                    <MicrographEditor section={s} />
                   </Box>
                 ))}
               </Stack>
@@ -374,9 +396,46 @@ export default function Detail() {
                   label="显微照片文件名"
                   value={sectionDraft.micrograph}
                   onChange={(e) => setSectionDraft((d) => ({ ...d, micrograph: e.target.value }))}
+                  sx={{ width: 180 }}
+                />
+                <FormControl size="small" sx={{ minWidth: 120 }}>
+                  <InputLabel id="micro-method-label">观察方式</InputLabel>
+                  <Select
+                    labelId="micro-method-label"
+                    label="观察方式"
+                    value={sectionDraft.microMethod}
+                    onChange={(e) =>
+                      setSectionDraft((d) => ({ ...d, microMethod: e.target.value as ObservationMethod }))
+                    }
+                  >
+                    {OBSERVATION_METHODS.map((om) => (
+                      <MenuItem key={om} value={om}>
+                        {OBSERVATION_METHOD_LABELS[om]}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <TextField
+                  id="section-micro-mag"
+                  size="small"
+                  type="number"
+                  label="倍数"
+                  value={sectionDraft.microMag}
+                  onChange={(e) => setSectionDraft((d) => ({ ...d, microMag: Number(e.target.value) }))}
+                  sx={{ width: 90 }}
+                />
+                <TextField
+                  id="section-micro-desc"
+                  size="small"
+                  label="照片说明"
+                  value={sectionDraft.microDesc}
+                  onChange={(e) => setSectionDraft((d) => ({ ...d, microDesc: e.target.value }))}
                   sx={{ width: 220 }}
                 />
               </Stack>
+              <Typography variant="caption" color="text.secondary">
+                填写照片文件名后，该照片即为首张主图；标「优」需主图说明不为空。
+              </Typography>
 
               <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
                 {MINERAL_KEYS.map((k) => (

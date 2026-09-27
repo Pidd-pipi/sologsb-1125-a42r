@@ -12,6 +12,8 @@ export const DB_NAME = 'gbmeteorite-db';
  *  - v1：建 samples / finds / sections 三张表
  *  - v2：新增 analysis 表，并为 analysis 加 sampleId 索引
  *  - v3：为 samples 补 updatedAt 字段，并按 id 回填旧记录
+ *  - v4：显微照片由纯文件名升级为结构化记录（观察方式/倍数/说明），
+ *        旧数据只保留文件名、其余留空按缺资料处理，主图一律置为「待指定」
  */
 export class MeteoriteDB extends Dexie {
   samples!: Table<MeteoriteSample, string>;
@@ -63,6 +65,38 @@ export class MeteoriteDB extends Dexie {
               sample.updatedAt =
                 typeof sample.createdAt === 'number' ? sample.createdAt : Date.now();
             }
+          });
+      });
+
+    this.version(4)
+      .stores({
+        samples:
+          'id, sampleNo, category, chemicalGroup, totalWeight, createdAt, updatedAt',
+        finds: 'id, sampleId, region, createdAt',
+        sections: 'id, sectionNo, sampleId, thickness, createdAt',
+        analysis: 'id, sampleId, sectionId, method, testedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        // v4：显微照片 string[] → Micrograph[]；旧记录只有文件名，
+        // 观察方式 / 倍数留空（按缺资料处理），主图置为「待指定」，不自动改指
+        await tx
+          .table<ThinSection, string>('sections')
+          .toCollection()
+          .modify((section) => {
+            if (
+              Array.isArray(section.micrographs) &&
+              section.micrographs.every((m) => typeof m === 'string')
+            ) {
+              section.micrographs = (section.micrographs as unknown as string[]).map(
+                (fileName) => ({
+                  fileName,
+                  method: null,
+                  magnification: null,
+                  description: '',
+                }),
+              );
+            }
+            if (typeof section.primaryImage === 'undefined') section.primaryImage = null;
           });
       });
   }
@@ -157,7 +191,21 @@ export async function seedIfEmpty(): Promise<void> {
         thickness: 30,
         preparation: 'resin',
         minerals: { olivine: 42, pyroxene: 28, feldspar: 12, metal: 18 },
-        micrographs: ['met001_ppl.jpg', 'met001_xpl.jpg'],
+        micrographs: [
+          {
+            fileName: 'met001_ppl.jpg',
+            method: 'ppl',
+            magnification: 40,
+            description: '单偏光下球粒轮廓清晰，基质重结晶明显',
+          },
+          {
+            fileName: 'met001_xpl.jpg',
+            method: 'xpl',
+            magnification: 40,
+            description: '正交偏光下橄榄石干涉色均匀',
+          },
+        ],
+        primaryImage: 'met001_ppl.jpg',
         quality: 'good',
         createdAt: now - 86400000 * 35,
       },
@@ -168,7 +216,15 @@ export async function seedIfEmpty(): Promise<void> {
         thickness: 60,
         preparation: 'epoxy',
         minerals: { olivine: 2, pyroxene: 5, feldspar: 1, metal: 92 },
-        micrographs: ['met002_reflect.jpg'],
+        micrographs: [
+          {
+            fileName: 'met002_reflect.jpg',
+            method: 'reflected',
+            magnification: 100,
+            description: '反射光下铁纹石与镍纹石共生条带',
+          },
+        ],
+        primaryImage: 'met002_reflect.jpg',
         quality: 'fair',
         createdAt: now - 86400000 * 25,
       },
